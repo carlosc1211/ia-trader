@@ -1,0 +1,25 @@
+watchlist:
+  - symbol: BTC/USDT
+    timeframes: [4h, 1d]
+    candles_lookback: 200
+
+decision_loop:
+  interval_minutes: 240        # 4h — un ciclo por cierre de vela 4h
+  max_decisions_per_day: 4
+
+llm:
+  model: claude-sonnet-4-6
+  max_tokens: 1500
+  temperature: 0.3
+  cache_system_prompt: true
+
+risk:
+  max_position_pct: 0.20       # 20% del capital por trade
+  max_concurrent_positions: 2
+  max_daily_loss_pct: 0.05     # 5%
+  max_drawdown_pct: 0.15       # 15%
+  min_rr_ratio: 1.5
+
+execution:
+  slippage_pct: 0.0005
+  fee_pct: 0.001               # Binance taker spot 0.1%
