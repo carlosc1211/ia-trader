@@ -9,9 +9,18 @@ import argparse
 import sys
 import time
 
-from ai_trader.config import load_yaml
+from ai_trader.config import env, load_yaml
 from ai_trader.logging_setup import setup as setup_logging
 from ai_trader.scheduler import run_cycle
+
+
+def _assert_mode_allowed(mode: str) -> None:
+    if mode == "live" and env("AI_TRADER_ALLOW_LIVE") != "yes":
+        raise SystemExit(
+            "ERROR: --mode live requiere AI_TRADER_ALLOW_LIVE=yes en .env.\n"
+            "Doble lock para evitar accidentes. Si estás seguro de operar con\n"
+            "dinero real, edita .env y vuelve a lanzar."
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -38,6 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     cfg = load_yaml(args.config)
 
+    effective_mode = args.mode or env("AI_TRADER_MODE", "paper")
+    _assert_mode_allowed(effective_mode)
+    log.info(f"mode={effective_mode}")
+
     if args.cmd == "once":
         result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
         log.info(f"result: action={result.action} executed={result.executed} equity=${result.equity:,.2f}")
@@ -47,7 +60,10 @@ def main(argv: list[str] | None = None) -> int:
     log.info(f"entering loop · interval={interval}s")
     while True:
         try:
-            run_cycle(cfg, symbol=args.symbol, mode=args.mode)
+            result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
+            if result.stop_requested:
+                log.info("stop_requested · saliendo del loop")
+                return 0
         except Exception:
             log.exception("cycle failed")
         log.info(f"sleeping {interval}s")
