@@ -84,14 +84,18 @@ def _snapshot_at(df: pd.DataFrame, ts: pd.Timestamp, tf_label: str,
 
 
 def _decide_cached(snap: dict, model: str, max_tokens: int, temperature: float,
-                   use_cache: bool, result: BTResult) -> tuple[TradingSignal, dict]:
-    key = snapshot_key(snap, model)
+                   use_cache: bool, result: BTResult, prompt_version: str,
+                   ) -> tuple[TradingSignal, dict]:
+    key = snapshot_key(snap, model, prompt_version=prompt_version)
     if use_cache:
         hit = cache_get(key)
         if hit:
             result.cache_hits += 1
             return hit
-    signal, meta = decide(snap, model=model, max_tokens=max_tokens, temperature=temperature)
+    signal, meta = decide(
+        snap, model=model, max_tokens=max_tokens, temperature=temperature,
+        prompt_version=prompt_version,
+    )
     result.llm_calls += 1
     if use_cache:
         cache_put(key, signal, meta)
@@ -116,6 +120,7 @@ def run_backtest(
     cfg: dict,
     warmup_bars: int = 200,
     use_cache: bool = True,
+    prompt_version: str = "v2",
 ) -> BTResult:
     df = load_history(symbol, timeframe, start, end, use_cache=True)
     if len(df) < warmup_bars + 2:
@@ -131,7 +136,7 @@ def run_backtest(
     result = BTResult()
 
     bars = df.iloc[warmup_bars:]
-    log.info(f"backtest · {symbol} {timeframe} · bars={len(bars)} cache={use_cache}")
+    log.info(f"backtest · {symbol} {timeframe} · bars={len(bars)} cache={use_cache} prompt={prompt_version}")
 
     for ts, bar in bars.iterrows():
         # 1) Salida de la posición si SL/TP se tocan en esta vela.
@@ -156,7 +161,7 @@ def run_backtest(
             snap = _snapshot_at(df, ts, timeframe, symbol, lookback=warmup_bars)
             signal, _ = _decide_cached(
                 snap, llm_cfg["model"], llm_cfg["max_tokens"], llm_cfg["temperature"],
-                use_cache, result,
+                use_cache, result, prompt_version,
             )
             result.decisions += 1
             if signal.action == "flat":

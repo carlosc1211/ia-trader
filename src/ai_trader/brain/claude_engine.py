@@ -13,27 +13,12 @@ from typing import Any
 
 from anthropic import Anthropic
 
+from ai_trader.brain.prompts import get as get_prompt
 from ai_trader.brain.signal import SIGNAL_TOOL_SCHEMA, TradingSignal
 from ai_trader.config import env
 
 
-SYSTEM_PROMPT = """Eres un trader cuantitativo conservador operando crypto spot en Binance.
-
-Tu trabajo: a partir de un snapshot multi-timeframe (precio, indicadores técnicos,
-niveles S/R, últimas velas) decidir una acción discreta: long, short o flat.
-
-Reglas no negociables:
-1. SIEMPRE emites la decisión vía la tool `emit_trading_signal`. Nunca respondas en texto libre.
-2. Si la acción es long o short, defines obligatoriamente stop_loss y take_profit coherentes:
-   - long: stop_loss < entry < take_profit
-   - short: take_profit < entry < stop_loss
-3. Risk/reward mínimo objetivo: 1.5. Si no lo ves, prefiere `flat`.
-4. `size_pct` ∈ [0, 0.20]. Más exposición que eso está prohibida por el sistema.
-5. En duda → `flat` con size_pct=0. No fuerces operaciones.
-6. `rationale` debe citar al menos 2 elementos concretos del snapshot (un indicador,
-   un nivel, una vela...). Evita generalidades como "el mercado parece alcista".
-
-Sesgo: prefieres no operar a operar mal. Hay 4 decisiones máximas por día; cada una cuenta."""
+DEFAULT_PROMPT_VERSION = "v2"
 
 
 def _client() -> Anthropic:
@@ -42,9 +27,11 @@ def _client() -> Anthropic:
 
 
 def decide(snapshot_dict: dict, model: str = "claude-sonnet-4-6", max_tokens: int = 1500,
-           temperature: float = 0.3) -> tuple[TradingSignal, dict[str, Any]]:
+           temperature: float = 0.3, prompt_version: str = DEFAULT_PROMPT_VERSION,
+           ) -> tuple[TradingSignal, dict[str, Any]]:
     """Pide una decisión a Claude. Devuelve (signal, raw_response_dict)."""
     client = _client()
+    system_prompt = get_prompt(prompt_version)
 
     user_content = (
         "Snapshot de mercado actual (JSON):\n\n"
@@ -59,7 +46,7 @@ def decide(snapshot_dict: dict, model: str = "claude-sonnet-4-6", max_tokens: in
         system=[
             {
                 "type": "text",
-                "text": SYSTEM_PROMPT,
+                "text": system_prompt,
                 "cache_control": {"type": "ephemeral"},
             }
         ],
@@ -78,5 +65,6 @@ def decide(snapshot_dict: dict, model: str = "claude-sonnet-4-6", max_tokens: in
         "model": resp.model,
         "stop_reason": resp.stop_reason,
         "usage": resp.usage.model_dump() if hasattr(resp.usage, "model_dump") else dict(resp.usage),
+        "prompt_version": prompt_version,
     }
     return signal, meta

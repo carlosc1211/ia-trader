@@ -26,6 +26,7 @@ def main() -> int:
     p.add_argument("--start", help="YYYY-MM-DD")
     p.add_argument("--end", help="YYYY-MM-DD")
     p.add_argument("--no-cache", action="store_true", help="ignora caché LLM (paga todo)")
+    p.add_argument("--prompt", default="v2", choices=["v1", "v2"], help="versión del system prompt")
     p.add_argument("--yes", action="store_true", help="no preguntar antes de ejecutar")
     args = p.parse_args()
 
@@ -54,6 +55,7 @@ def main() -> int:
     print(f"Barras estimadas: {bars_estimate} (decisiones ~{decisions_est})")
     print(f"Coste estimado SIN caché: ~${cost_est:.2f}")
     print(f"Caché LLM: {'OFF' if args.no_cache else 'ON'}")
+    print(f"Prompt:    {args.prompt}")
 
     if not args.yes:
         resp = input("¿Continuar? [y/N]: ").strip().lower()
@@ -63,7 +65,7 @@ def main() -> int:
 
     result = run_backtest(
         symbol=symbol, timeframe=timeframe, start=start, end=end,
-        cfg=cfg, use_cache=not args.no_cache,
+        cfg=cfg, use_cache=not args.no_cache, prompt_version=args.prompt,
     )
     metrics = compute(result, initial_capital=float(cfg["execution"]["initial_capital_usdt"]))
     print_report(metrics, initial_capital=float(cfg["execution"]["initial_capital_usdt"]))
