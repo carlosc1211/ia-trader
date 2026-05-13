@@ -23,3 +23,4 @@ risk:
 execution:
   slippage_pct: 0.0005
   fee_pct: 0.001               # Binance taker spot 0.1%
+  initial_capital_usdt: 1000   # capital de partida en paper trading
