@@ -95,14 +95,45 @@ else:
 # ── Posiciones cerradas ───────────────────────────────────────────────────────
 st.subheader(f"Histórico cerradas ({len(closed_pos)})")
 if closed_pos:
-    df_cl = pd.DataFrame([{
-        "id": p.id, "symbol": p.symbol, "dir": p.direction,
-        "entry": p.entry_price, "exit": p.exit_price, "qty": p.qty,
-        "PnL": p.realized_pnl, "mode": p.mode,
-        "opened": p.opened_at, "closed": p.closed_at,
-    } for p in closed_pos])
-    df_cl = df_cl.sort_values("closed", ascending=False)
-    st.dataframe(df_cl, hide_index=True, use_container_width=True)
+    rows = []
+    for p in closed_pos:
+        notional = p.qty * p.entry_price
+        pnl = p.realized_pnl or 0.0
+        pnl_pct = (pnl / notional * 100) if notional > 0 else 0.0
+        dur = (p.closed_at - p.opened_at) if p.closed_at else None
+        rows.append({
+            "id": p.id, "symbol": p.symbol, "dir": p.direction,
+            "notional": notional,
+            "entry": p.entry_price, "exit": p.exit_price,
+            "PnL $": pnl, "PnL %": pnl_pct,
+            "duración": str(dur).split(".")[0] if dur else "",
+            "mode": p.mode,
+            "opened": p.opened_at, "closed": p.closed_at,
+        })
+    df_cl = pd.DataFrame(rows).sort_values("closed", ascending=False)
+
+    st.dataframe(
+        df_cl, hide_index=True, use_container_width=True,
+        column_config={
+            "notional": st.column_config.NumberColumn("Notional", format="$%.2f"),
+            "entry":    st.column_config.NumberColumn("Entry", format="$%.2f"),
+            "exit":     st.column_config.NumberColumn("Exit", format="$%.2f"),
+            "PnL $":    st.column_config.NumberColumn("PnL $", format="$%+.2f"),
+            "PnL %":    st.column_config.NumberColumn("PnL %", format="%+.2f%%"),
+        },
+    )
+
+    # Resumen agregado debajo del histórico.
+    total_pnl_d = df_cl["PnL $"].sum()
+    total_notional = df_cl["notional"].sum()
+    avg_pct = df_cl["PnL %"].mean()
+    best = df_cl["PnL $"].max()
+    worst = df_cl["PnL $"].min()
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("PnL acumulado", f"${total_pnl_d:+,.2f}")
+    c2.metric("PnL medio %", f"{avg_pct:+.2f}%")
+    c3.metric("Mejor trade", f"${best:+,.2f}")
+    c4.metric("Peor trade", f"${worst:+,.2f}")
 
 # ── Últimas señales ───────────────────────────────────────────────────────────
 st.subheader("Últimas señales de Claude")
