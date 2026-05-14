@@ -27,7 +27,8 @@ def validate(signal: TradingSignal, risk_cfg: dict) -> RiskCheck:
         reasons.append(f"size_pct {signal.size_pct:.3f} > max_position_pct {max_pos:.3f}")
 
     min_rr = float(risk_cfg.get("min_rr_ratio", 1.5))
-    if signal.risk_reward < min_rr:
+    # Tolerancia de 0.005 para absorber redondeos cuando Claude apunta justo al mínimo.
+    if signal.risk_reward + 0.005 < min_rr:
         reasons.append(f"RR {signal.risk_reward:.2f} < min_rr_ratio {min_rr:.2f}")
 
     return RiskCheck(ok=not reasons, reasons=reasons)

@@ -1,9 +1,12 @@
 """Formato de mensajes Telegram (HTML).
 
 Mensajes cortos, legibles en móvil. El rationale del LLM puede ser largo,
-así que lo truncamos a un límite razonable.
+así que lo truncamos a un límite razonable. Texto libre del LLM se escapa
+para no romper el parseo HTML de Telegram.
 """
 from __future__ import annotations
+
+import html
 
 from ai_trader.brain.risk_validator import RiskCheck
 from ai_trader.brain.signal import TradingSignal
@@ -12,6 +15,11 @@ from ai_trader.execution.paper_broker import FillResult
 
 def _trim(text: str, n: int = 400) -> str:
     return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _safe(text: str) -> str:
+    """Escapa caracteres HTML para mensajes Telegram con parse_mode=HTML."""
+    return html.escape(text, quote=False)
 
 
 def signal_msg(symbol: str, signal: TradingSignal, check: RiskCheck) -> str:
@@ -25,8 +33,8 @@ def signal_msg(symbol: str, signal: TradingSignal, check: RiskCheck) -> str:
     ]
     if not check.ok:
         for r in check.reasons:
-            lines.append(f"  · {r}")
-    lines.append(f"\n<i>{_trim(signal.rationale)}</i>")
+            lines.append(f"  · {_safe(r)}")
+    lines.append(f"\n<i>{_safe(_trim(signal.rationale))}</i>")
     return "\n".join(lines)
 
 
@@ -52,5 +60,5 @@ def equity_msg(mode: str, equity: float, cash: float, unrealized_pnl: float) -> 
 
 
 def risk_block_msg(reasons: list[str]) -> str:
-    body = "\n".join(f"  · {r}" for r in reasons)
+    body = "\n".join(f"  · {_safe(r)}" for r in reasons)
     return f"<b>🚧 Ejecución bloqueada por risk manager</b>\n{body}"
