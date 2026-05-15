@@ -47,6 +47,27 @@ def _testnet_urls() -> dict:
     }
 
 
+def _keys_for(mode: str) -> tuple[str, str]:
+    """Devuelve (api_key, secret) para el modo. Usa variables específicas por
+    entorno si están disponibles; cae a las genéricas para retrocompatibilidad.
+
+    Prefijos por modo:
+      testnet → BINANCE_TESTNET_API_KEY / BINANCE_TESTNET_API_SECRET
+      live    → BINANCE_LIVE_API_KEY    / BINANCE_LIVE_API_SECRET
+      fallback genérico (cualquier modo): BINANCE_API_KEY / BINANCE_API_SECRET
+    """
+    prefix = "BINANCE_TESTNET" if mode == "testnet" else "BINANCE_LIVE"
+    api_key = env(f"{prefix}_API_KEY") or env("BINANCE_API_KEY")
+    secret = env(f"{prefix}_API_SECRET") or env("BINANCE_API_SECRET")
+    if not api_key or not secret:
+        raise RuntimeError(
+            f"Faltan credenciales para mode={mode}. Define "
+            f"{prefix}_API_KEY y {prefix}_API_SECRET en .env "
+            f"(o, como fallback, BINANCE_API_KEY/BINANCE_API_SECRET)."
+        )
+    return api_key, secret
+
+
 def make_authenticated_exchange(*, mode: str) -> ccxt.binance:
     """Crea un ccxt.binance autenticado. Verifica salvaguardas para live."""
     if mode == "live":
@@ -56,9 +77,10 @@ def make_authenticated_exchange(*, mode: str) -> ccxt.binance:
                 "para autorizar operativa con dinero real."
             )
 
+    api_key, secret = _keys_for(mode)
     params = {
-        "apiKey": env("BINANCE_API_KEY", required=True),
-        "secret": env("BINANCE_API_SECRET", required=True),
+        "apiKey": api_key,
+        "secret": secret,
         "enableRateLimit": True,
         "options": {"defaultType": "spot", "recvWindow": 10_000},
     }
