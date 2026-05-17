@@ -2,6 +2,12 @@ watchlist:
   - symbol: BTC/USDT
     timeframes: [4h, 1d]
     candles_lookback: 200
+  - symbol: ETH/USDT
+    timeframes: [4h, 1d]
+    candles_lookback: 200
+  - symbol: SOL/USDT
+    timeframes: [4h, 1d]
+    candles_lookback: 200
 
 decision_loop:
   interval_minutes: 240        # 4h — un ciclo por cierre de vela 4h

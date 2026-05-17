@@ -49,6 +49,7 @@ class CycleResult:
     equity: float
     cash: float
     stop_requested: bool
+    current_price: float = 0.0
 
 
 def _bootstrap_cash_paper(session: Session, *, mode: str, initial: float) -> float:
@@ -70,7 +71,8 @@ def _maybe_telegram(text: str) -> None:
 
 
 def _run_paper(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
-               snap_dict: dict, current_price: float, mode: str) -> CycleResult:
+               snap_dict: dict, current_price: float, mode: str,
+               record_equity: bool = True) -> CycleResult:
     cash = _bootstrap_cash_paper(s, mode=mode, initial=cfg["execution"]["initial_capital_usdt"])
     log.info(f"cash bootstrap · ${cash:,.2f}")
 
@@ -121,9 +123,11 @@ def _run_paper(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
                 log.info(f"entry · qty={fill.qty:.6f} price=${fill.order_price:,.2f}")
                 _maybe_telegram(fill_msg(symbol, fill, "entry"))
 
-    paper_broker.snapshot_equity(s, mode=mode, cash=cash, current_price=current_price, symbol=symbol)
+    if record_equity:
+        paper_broker.snapshot_equity(s, mode=mode, cash=cash, current_price=current_price, symbol=symbol)
     eq, unr = paper_broker.compute_equity(s, mode=mode, current_price=current_price, symbol=symbol, cash=cash)
-    _maybe_telegram(equity_msg(mode, eq, cash, unr))
+    if record_equity:
+        _maybe_telegram(equity_msg(mode, eq, cash, unr))
     log.info(f"cycle done · equity=${eq:,.2f} cash=${cash:,.2f} unrealized=${unr:+.2f}")
 
     return CycleResult(symbol=symbol, action=signal.action, validated=check.ok,
@@ -133,7 +137,7 @@ def _run_paper(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
 
 def _run_live(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
               snap_dict: dict, current_price: float, mode: str,
-              close_all_requested: bool) -> CycleResult:
+              close_all_requested: bool, record_equity: bool = True) -> CycleResult:
     from ai_trader.execution import binance_broker
 
     ex = binance_broker.make_authenticated_exchange(mode=mode)
@@ -189,10 +193,18 @@ def _run_live(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
                 log.info(f"entry · qty={fill.qty:.6f} price=${fill.order_price:,.2f}")
                 _maybe_telegram(fill_msg(symbol, fill, "entry"))
 
-    eq, cash, unr = binance_broker.snapshot_equity(
-        s, mode=mode, ex=ex, symbol=symbol, current_price=current_price,
-    )
-    _maybe_telegram(equity_msg(mode, eq, cash, unr))
+    if record_equity:
+        eq, cash, unr = binance_broker.snapshot_equity(
+            s, mode=mode, ex=ex, symbol=symbol, current_price=current_price,
+        )
+        _maybe_telegram(equity_msg(mode, eq, cash, unr))
+    else:
+        # Solo cómputo local (sin persistencia), para que el resultado refleje algo coherente.
+        bal = ex.fetch_balance()
+        base, _, quote = symbol.replace(":", "/").partition("/")
+        cash = float(bal.get(quote, {}).get("total", 0.0))
+        eq = cash + float(bal.get(base, {}).get("total", 0.0)) * current_price
+        unr = 0.0
     log.info(f"cycle done · equity=${eq:,.2f} cash=${cash:,.2f} unrealized=${unr:+.2f}")
 
     return CycleResult(symbol=symbol, action=signal.action, validated=check.ok,
@@ -200,11 +212,31 @@ def _run_live(s: Session, *, cfg: dict, symbol: str, timeframes: list[str],
                        equity=eq, cash=cash, stop_requested=False)
 
 
-def run_cycle(cfg: dict, *, symbol: str | None = None, mode: str | None = None) -> CycleResult:
+def _watchlist_entry(cfg: dict, symbol: str | None) -> dict:
+    """Devuelve la entrada del watchlist para `symbol`. Si symbol es None,
+    devuelve la primera entrada."""
+    if symbol is None:
+        return cfg["watchlist"][0]
+    for entry in cfg["watchlist"]:
+        if entry["symbol"] == symbol:
+            return entry
+    raise ValueError(f"Símbolo {symbol} no está en watchlist; añádelo a config.yaml")
+
+
+def run_cycle(cfg: dict, *, symbol: str | None = None, mode: str | None = None,
+              record_equity_snapshot: bool = True) -> CycleResult:
+    """Ejecuta un ciclo para UN símbolo. Si no se pasa symbol, usa el primero
+    del watchlist (uso clásico). Para procesar todos los símbolos del
+    watchlist en una sola pasada, usar `run_all_cycles`.
+
+    `record_equity_snapshot` controla si se persiste un EquitySnapshot al
+    final del ciclo. Cuando se llama desde `run_all_cycles`, se pone False
+    porque la equity se grabará UNA vez al final sumando todos los bases.
+    """
     init_db()
     mode = mode or MODE
-    watch = cfg["watchlist"][0]
-    symbol = symbol or watch["symbol"]
+    watch = _watchlist_entry(cfg, symbol)
+    symbol = watch["symbol"]
     timeframes = watch["timeframes"]
     lookback = watch.get("candles_lookback", 200)
 
@@ -223,11 +255,58 @@ def run_cycle(cfg: dict, *, symbol: str | None = None, mode: str | None = None) 
 
     with get_session() as s:
         if mode == "paper":
-            return _run_paper(s, cfg=cfg, symbol=symbol, timeframes=timeframes,
-                              snap_dict=snap.to_dict(), current_price=current_price, mode=mode)
+            res = _run_paper(s, cfg=cfg, symbol=symbol, timeframes=timeframes,
+                              snap_dict=snap.to_dict(), current_price=current_price, mode=mode,
+                              record_equity=record_equity_snapshot)
         elif mode in ("live", "testnet"):
-            return _run_live(s, cfg=cfg, symbol=symbol, timeframes=timeframes,
+            res = _run_live(s, cfg=cfg, symbol=symbol, timeframes=timeframes,
                              snap_dict=snap.to_dict(), current_price=current_price, mode=mode,
-                             close_all_requested=ctrl.stop_requested and ctrl.paused)
+                             close_all_requested=ctrl.stop_requested and ctrl.paused,
+                             record_equity=record_equity_snapshot)
         else:
             raise ValueError(f"mode desconocido: {mode}")
+        res.current_price = current_price
+        return res
+
+
+def run_all_cycles(cfg: dict, *, mode: str | None = None) -> list[CycleResult]:
+    """Ejecuta un ciclo por cada símbolo del watchlist, en orden.
+
+    El risk_manager global (max_concurrent_positions, max_daily_loss, drawdown)
+    se evalúa por cada símbolo, así que si BTC abre una posición, ETH/SOL
+    posteriores ya verán el contador actualizado y se respetará el límite.
+
+    Equity se persiste UNA vez al final sumando todos los bases del watchlist
+    (no por símbolo, para no distorsionar la curva).
+    """
+    mode = mode or MODE
+    results: list[CycleResult] = []
+    prices: dict[str, float] = {}
+
+    for entry in cfg["watchlist"]:
+        try:
+            res = run_cycle(cfg, symbol=entry["symbol"], mode=mode, record_equity_snapshot=False)
+            results.append(res)
+            if res.current_price > 0:
+                prices[entry["symbol"]] = res.current_price
+            if res.stop_requested:
+                log.info("stop_requested · saltando símbolos restantes")
+                break
+        except Exception:
+            log.exception(f"cycle {entry['symbol']} fallido — continuando con el siguiente")
+
+    # Equity agregada al final del round (lazy import para no exigir broker en paper-only).
+    if prices and mode in ("live", "testnet"):
+        try:
+            from ai_trader.execution import binance_broker
+            with get_session() as s:
+                ex = binance_broker.make_authenticated_exchange(mode=mode)
+                eq, cash, unr = binance_broker.snapshot_equity_multi(
+                    s, mode=mode, ex=ex, prices=prices,
+                )
+                _maybe_telegram(equity_msg(mode, eq, cash, unr))
+                log.info(f"round done · equity=${eq:,.2f} cash=${cash:,.2f} unrealized=${unr:+.2f}")
+        except Exception:
+            log.exception("equity agregada falló — los ciclos individuales sí se ejecutaron")
+
+    return results

@@ -252,6 +252,12 @@ def check_exits(
 
 def snapshot_equity(session: Session, *, mode: str, ex: ccxt.binance, symbol: str,
                     current_price: float) -> tuple[float, float, float]:
+    """Equity para un único símbolo (cash USDT + ese base × precio).
+
+    En setups multi-símbolo, esta función infra-estima la equity porque
+    ignora los balances de otros bases. Para esos casos usar
+    `snapshot_equity_multi`.
+    """
     bal = ex.fetch_balance()
     base, _, quote = symbol.replace(":", "/").partition("/")
     cash = float(bal.get(quote, {}).get("total", 0.0))
@@ -263,6 +269,30 @@ def snapshot_equity(session: Session, *, mode: str, ex: ccxt.binance, symbol: st
     for pos in open_positions(session, symbol):
         unrealized += pos.qty * (current_price - pos.entry_price)
 
+    record_equity(session, mode=mode, equity=equity, cash=cash, unrealized_pnl=unrealized)
+    return equity, cash, unrealized
+
+
+def snapshot_equity_multi(session: Session, *, mode: str, ex: ccxt.binance,
+                          prices: dict[str, float]) -> tuple[float, float, float]:
+    """Equity sumando TODOS los bases del watchlist más el cash USDT.
+
+    `prices` mapea símbolo (ej. 'BTC/USDT') → precio actual de ese símbolo.
+    """
+    bal = ex.fetch_balance()
+    quote = next(iter(prices)).split("/")[1] if prices else "USDT"
+    cash = float(bal.get(quote, {}).get("total", 0.0))
+
+    position_value = 0.0
+    unrealized = 0.0
+    for symbol, price in prices.items():
+        base = symbol.split("/")[0]
+        base_qty = float(bal.get(base, {}).get("total", 0.0))
+        position_value += base_qty * price
+        for pos in open_positions(session, symbol):
+            unrealized += pos.qty * (price - pos.entry_price)
+
+    equity = cash + position_value
     record_equity(session, mode=mode, equity=equity, cash=cash, unrealized_pnl=unrealized)
     return equity, cash, unrealized
 

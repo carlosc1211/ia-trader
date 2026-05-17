@@ -11,7 +11,7 @@ import time
 
 from ai_trader.config import env, load_yaml
 from ai_trader.logging_setup import setup as setup_logging
-from ai_trader.scheduler import run_cycle
+from ai_trader.scheduler import run_all_cycles, run_cycle
 
 
 def _assert_mode_allowed(mode: str) -> None:
@@ -52,18 +52,29 @@ def main(argv: list[str] | None = None) -> int:
     log.info(f"mode={effective_mode}")
 
     if args.cmd == "once":
-        result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
-        log.info(f"result: action={result.action} executed={result.executed} equity=${result.equity:,.2f}")
+        if args.symbol:
+            result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
+            log.info(f"result: action={result.action} executed={result.executed} equity=${result.equity:,.2f}")
+        else:
+            results = run_all_cycles(cfg, mode=args.mode)
+            for r in results:
+                log.info(f"{r.symbol}: action={r.action} executed={r.executed} equity=${r.equity:,.2f}")
         return 0
 
     interval = int(cfg["decision_loop"]["interval_minutes"]) * 60
     log.info(f"entering loop · interval={interval}s")
     while True:
         try:
-            result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
-            if result.stop_requested:
-                log.info("stop_requested · saliendo del loop")
-                return 0
+            if args.symbol:
+                result = run_cycle(cfg, symbol=args.symbol, mode=args.mode)
+                if result.stop_requested:
+                    log.info("stop_requested · saliendo del loop")
+                    return 0
+            else:
+                results = run_all_cycles(cfg, mode=args.mode)
+                if any(r.stop_requested for r in results):
+                    log.info("stop_requested · saliendo del loop")
+                    return 0
         except Exception:
             log.exception("cycle failed")
         log.info(f"sleeping {interval}s")
